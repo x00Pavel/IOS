@@ -1,0 +1,336 @@
+#!/bin/bash
+
+#set -x
+
+POSIXLY_CORRECT=yes
+
+#variables
+FILENAME=""
+IPADDR=""
+PROM=""
+URI=""
+
+function wrong_filename() {
+    for name in $FILENAME; do
+        if ! ([[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]] || [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]])  ; then
+            echo WRONG FILENAME: $name
+            exit
+        fi
+    done
+}
+
+function cheak_filename() {
+    if ! [[ $FILENAME ]]; then
+        read FILENAME
+    fi
+}
+
+function cheak_ip() {
+    if ! [[ $IPADDR ]]; then
+        IPADDR='([0-9]{1,3}[\.]){3}[0-9]{1,3}|([a-f0-9]{1,4}:){4}([a-f0-9]{0,4}){0,1}([a-f0-9]{0,4}:{0,1}){2,4}'
+    fi
+}
+
+#input is readed file
+#output is stirngs with neaded URI
+#if URI wasnt defined, then URI is default /*
+#and output is the same as input
+function for_uri() {
+    if ! [[ $URI ]]; then
+        URI='/*'
+    fi
+    while read LINE; do
+        a=`echo $LINE | egrep -o "$URI"`
+        if [[ $a ]]; then
+            echo $LINE
+        fi
+    done
+}
+
+function for_ip() {
+    cheak_ip
+    while read LINE; do
+        a=`echo $LINE | egrep -o "$IPADDR"`
+        if [[ $a ]]; then
+            echo $LINE
+        fi
+    done
+}
+#function for geting URI
+function get_uri() {
+    sed -e 's/.*GET //' |
+    sed 's/.*POST //' |
+    sed 's/.*HEAD //' |
+    sed 's/HTTP.*//'|
+    sed 's/.*"-"$//' |
+    sed -r '/^\s*$/d' | sort | uniq |
+    egrep -o "$URI.*"
+}
+
+function get_host(){
+    for ip in $PROM; do
+        hst=`host $ip`
+        line=`echo $hst | sed 's/^.*.arpa domain name pointer //' | sed 's/^.*not found://'`
+        if [[ $line =~ [0-9]\(.*\) ]]; then
+            echo $ip
+        else
+            echo $line
+        fi
+    done
+}
+
+function hist_ip() {
+    egrep -o $IPADDR |
+    sort | uniq -c | awk '{printf("%s %s\n",$2,$1)}'|
+    while read d n; do echo -n "$d ($n): "; printf "%${n}s\n" "#"|
+    tr ' ' '#' ;done
+
+}
+
+function hist_load() {
+    egrep -o '[0-9]{1,2}/[a-Z]{3}/[0-9]{4}(:[0-9]{1,2}){1}' | #gettinf date
+    sed 's/\//-/g' | sed 's/:/ /'|
+    while read line; do date -d "$line" +"%Y-%m-%d %H"; done| #formating date
+    sort | uniq -c | awk '{printf("%s %s %s\n",$2,$3,$1)}'|
+    while read d t n; do echo -n "$d $t.00 ($n) : "; printf "%${n}s\n" "#"|
+    tr ' ' '#' ;done
+}
+
+function time() {
+        while read LINE; do
+            if [[ $DATE_AFTER ]] && [[ $DATE_BEFOR ]]; then
+                data=` echo $LINE | egrep -o '[0-9]{1,2}/[a-Z]{3}/[0-9]{4}(:[0-9]{1,2}){3}' | sed 's/\//-/g' | sed 's/:/ /'`
+                #echo $data
+                a=`date -d "$data" +%s`
+                #echo $a
+                if [ $a -gt $DATE_AFTER ] && [ $a -lt $DATE_BEFOR ]; then
+                    echo $LINE
+                fi
+            elif [[ $DATE_AFTER ]]; then
+                data=` echo $LINE | egrep -o '[0-9]{1,2}/[a-Z]{3}/[0-9]{4}(:[0-9]{1,2}){3}' | sed 's/\//-/g' | sed 's/:/ /'`
+                #echo $data
+                a=`date -d "$data" +%s`
+                #echo $a
+                if [ $a -gt $DATE_AFTER ]; then
+                    echo $LINE
+                fi
+            elif [[ $DATE_BEFOR ]]; then
+                data=` echo $LINE | egrep -o '[0-9]{1,2}/[a-Z]{3}/[0-9]{4}(:[0-9]{1,2}){3}' | sed 's/\//-/g' | sed 's/:/ /'`
+                #echo $data
+                a=`date -d "$data" +%s`
+                #echo $a
+                if [ $a -lt $DATE_BEFOR ]; then
+                    echo $LINE
+                fi
+            fi
+        done
+}
+
+function OTHER() {
+    for name in $FILENAME; do
+        if [[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+            if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                gunzip -c $name| time
+            else
+                gunzip -c $name
+            fi
+        elif [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]]; then
+            if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                cat $name |  time
+            else
+                cat $name
+            fi
+        fi
+    done | for_uri | for_ip | sort | uniq
+}
+
+#if thre is no arguments -> read from stdin -> write down everthing
+if [[ $# == 0 ]]; then
+    read FILENAME
+    wrong_filename
+    for name in $FILENAME; do
+        if [[ $name  =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+            echo HERE
+            gunzip -c $name
+        elif [[ $name =~ .*.log(.){0,1}[0-9]{0,2} ]]; then
+            cat $name
+        fi
+    done
+    exit
+fi
+
+#cheak if first argument name of file -> just writedown all text
+if [[ $1 =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+    FILENAME=$@
+    wrong_filename
+    for name in $FILENAME; do
+        if [[ $name  =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+            gunzip -c $name
+        elif [[ $name =~ .*.log(.){0,1}[0-9]{0,2} ]]; then
+            cat $name
+        fi
+    done
+    exit
+elif [[ $1 =~ .*.log(.){0,1}[0-9]{0,2} ]]; then
+    FILENAME=$@
+    wrong_filename
+    for name in $FILENAME; do
+        if [[ $name  =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+            gunzip -c $name
+        elif [[ $name =~ .*.log(.){0,1}[0-9]{0,2} ]]; then
+            cat $name
+        fi
+    done
+    exit
+fi
+
+#process arguments
+while [[  $1 ]]; do
+    case $1 in
+        -a)DATE_AFTER=`date -d "$2" +%s`
+        shift;;
+
+        -b)DATE_BEFOR=`date -d "$2" +%s`
+         shift;;
+
+        -ip)IPADDR=$2
+        shift;;
+
+        -uri)URI=$2
+        shift;;
+
+        list-ip)shift
+                FILENAME=$@
+                #cheac if FILENAME and IPADDR is geaven
+                cheak_filename
+                cheak_ip
+                wrong_filename
+
+                #processing data from files
+                for name in $FILENAME; do
+                    if [[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+                        if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                            gunzip -c $name|  time
+                        else
+                            gunzip -c $name
+                        fi
+                    elif [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]]; then
+                        if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                            cat $name | time
+                        else
+                            cat $name
+                        fi
+                    fi
+                done | for_uri  | egrep -o $IPADDR | sort | uniq
+                exit;;
+
+        list-hosts)shift
+                    FILENAME=$@
+                    cheak_filename
+                    wrong_filename
+                    cheak_ip
+
+                    for name in $FILENAME; do
+                        if [[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+                            if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                                PROM=`gunzip -c $name | for_uri | for_ip | time  | egrep -o $IPADDR | sort | uniq `
+                                get_host
+
+                            else
+                                PROM=`gunzip -c $name | for_uri | for_ip | egrep -o $IPADDR | sort | uniq`
+                                get_host
+                            fi
+                        elif [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]]; then
+                            if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                                PROM=`cat $name | for_uri  | for_ip |  time | egrep -o $IPADDR | sort | uniq`
+                                get_host
+                            else
+                                PROM=`cat $name | for_uri  | for_ip | egrep -o $IPADDR | sort | uniq`
+                                get_host
+                            fi
+                        fi
+                    done | sort -r | uniq
+                    exit
+                    ;;
+
+        list-uri) shift
+                FILENAME=$@
+                cheak_filename
+                wrong_filename
+
+                #все что за GET HEAD POST в логах
+                for name in $FILENAME; do
+                    if [[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+                        if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                            gunzip -c $name | time
+
+                        else
+                            gunzip -c $name
+                        fi
+
+                    fi
+                    if [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]]; then
+                        if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                            cat $name | time
+                        else
+                            cat $name
+                        fi
+                    fi
+                done | for_uri  | get_uri | sort -k1
+                exit
+                ;;
+
+        hist-ip) shift
+                FILENAME=$@
+                #cheac if FILENAME and IPADDR is geaven
+                cheak_filename
+                wrong_filename
+                cheak_ip
+                for name in $FILENAME; do
+                    if [[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+                        if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                            gunzip -c $name |  time
+                        else
+                            gunzip -c $name
+                        fi
+                    fi
+                    if [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]]; then
+                        if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                            cat $name | time
+                        else
+                            cat $name
+                        fi
+                    fi
+                done | for_uri | for_ip | hist_ip | sort -k3r
+                exit;;
+
+        hist-load) shift
+                    FILENAME=$@
+                    cheak_filename
+                    wrong_filename
+                    for name in $FILENAME; do
+                        if [[ $name =~ .*.log.[0-9]{0,2}(.){0,1}gz ]]; then
+                            if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                                gunzip -c $name |  time
+                            else
+                                gunzip -c $name
+                            fi
+                        fi
+
+                        if [[ $name =~ .*.log(.){0,1}[0-9]{0,1} ]]; then
+                            if [[ $DATE_AFTER ]] || [[ $DATE_BEFOR ]]; then
+                                cat $name | time
+                            else
+                                cat $name
+
+                            fi
+                    fi
+                    done | for_uri | for_ip | hist_load | sort -k1
+                    exit;;
+
+        *)FILENAME=$@
+        wrong_filename
+        OTHER;;
+    esac
+    shift
+done
